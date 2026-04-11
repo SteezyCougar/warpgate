@@ -21,7 +21,7 @@ use warpgate_common::http_headers::{
 };
 use warpgate_common::{try_block, TargetHTTPOptions, WarpgateError};
 use warpgate_common_http::logging::{get_client_ip, log_request_result};
-use warpgate_common_http::{AuthenticatedRequestContext, SessionAuthorization};
+use warpgate_common_http::{AuthenticatedRequestContext, RequestAuthorization, SessionAuthorization};
 use warpgate_tls::{configure_tls_connector, TlsMode};
 use warpgate_web::lookup_built_file;
 
@@ -148,6 +148,17 @@ fn rewrite_request<B: SomeRequestBuilder>(mut req: B, options: &TargetHTTPOption
     Ok(req)
 }
 
+fn compute_basic_auth_header(options: &TargetHTTPOptions) -> Option<HeaderValue> {
+    match (&options.basic_auth_username, &options.basic_auth_password) {
+        (Some(username), Some(password)) => {
+            let credentials = format!("{}:{}", username, password);
+            let encoded = BASE64.encode(credentials.as_bytes());
+            HeaderValue::from_str(&format!("Basic {}", encoded)).ok()
+        }
+        _ => None,
+    }
+}
+
 fn rewrite_response(
     resp: &mut Response,
     options: &TargetHTTPOptions,
@@ -225,7 +236,11 @@ fn inject_forwarding_headers<B: SomeRequestBuilder>(req: &Request, mut target: B
     Ok(target)
 }
 
-async fn inject_own_headers<B: SomeRequestBuilder>(req: &Request, mut target: B) -> Result<B> {
+async fn inject_own_headers<B: SomeRequestBuilder>(
+    req: &Request,
+    ctx: &AuthenticatedRequestContext,
+    mut target: B,
+) -> Result<B> {
     let session = <&Session>::from_request_without_body(req).await?;
     if let Some(auth) = session.get_auth() {
         target = target.header(&X_WARPGATE_USERNAME, auth.username()).header(
@@ -235,6 +250,10 @@ async fn inject_own_headers<B: SomeRequestBuilder>(req: &Request, mut target: B)
                 SessionAuthorization::User { .. } => "user",
             },
         );
+    } else if let RequestAuthorization::UserToken { ref username, .. } = ctx.auth {
+        target = target
+            .header(&X_WARPGATE_USERNAME, username)
+            .header(&X_WARPGATE_AUTHENTICATION_TYPE, "token");
     }
     Ok(target)
 }
@@ -286,8 +305,9 @@ pub async fn proxy_normal_request(
 
     client_request = copy_server_request(req, client_request);
     client_request = inject_forwarding_headers(req, client_request)?;
-    client_request = inject_own_headers(req, client_request).await?;
+    client_request = inject_own_headers(req, ctx, client_request).await?;
     client_request = rewrite_request(client_request, options)?;
+    let authorization_header = compute_basic_auth_header(options).or(authorization_header);
     if let Some(authorization_header) = authorization_header {
         client_request = client_request.header(http::header::AUTHORIZATION, authorization_header);
     }
@@ -374,10 +394,11 @@ async fn copy_client_body_and_embed(
 pub async fn proxy_websocket_request(
     req: &Request,
     ws: WebSocket,
+    ctx: &AuthenticatedRequestContext,
     options: &TargetHTTPOptions,
 ) -> poem::Result<impl IntoResponse> {
     let uri = construct_uri(req, options, true)?;
-    proxy_ws_inner(req, ws, uri.clone(), options)
+    proxy_ws_inner(req, ws, uri.clone(), ctx, options)
         .await
         .map_err(|error| {
             tracing::error!(?uri, ?error, "WebSocket proxy failed");
@@ -419,6 +440,7 @@ async fn proxy_ws_inner(
     req: &Request,
     ws: WebSocket,
     uri: Uri,
+    ctx: &AuthenticatedRequestContext,
     options: &TargetHTTPOptions,
 ) -> poem::Result<impl IntoResponse> {
     let (authorization_header, uri) = extract_basic_auth(uri)?;
@@ -440,13 +462,14 @@ async fn proxy_ws_inner(
                 .to_string(),
         );
 
+    let authorization_header = compute_basic_auth_header(options).or(authorization_header);
     if let Some(authorization_header) = authorization_header {
         client_request = client_request.header(http::header::AUTHORIZATION, authorization_header);
     }
 
     client_request = copy_server_request(req, client_request);
     client_request = inject_forwarding_headers(req, client_request)?;
-    client_request = inject_own_headers(req, client_request).await?;
+    client_request = inject_own_headers(req, ctx, client_request).await?;
     client_request = rewrite_request(client_request, options)?;
 
     let tls_config = configure_tls_connector(!options.tls.verify, false, None)
