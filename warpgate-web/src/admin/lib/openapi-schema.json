@@ -5183,6 +5183,12 @@
           },
           "external_host": {
             "type": "string"
+          },
+          "basic_auth_username": {
+            "type": "string"
+          },
+          "basic_auth_password": {
+            "type": "string"
           }
         }
       },

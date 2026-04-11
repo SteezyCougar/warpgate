@@ -50,7 +50,7 @@ pub async fn catchall_endpoint(
     let span = info_span!("", target=%target.name);
 
     Ok(match ws {
-        Some(ws) => proxy_websocket_request(req, ws, &options)
+        Some(ws) => proxy_websocket_request(req, ws, &ctx, &options)
             .instrument(span)
             .await?
             .into_response(),
@@ -112,7 +112,8 @@ async fn get_target_for_request(
             need_role_auth = false;
             username
         }
-        RequestAuthorization::Session(SessionAuthorization::User(username)) => {
+        RequestAuthorization::Session(SessionAuthorization::User(username))
+        | RequestAuthorization::UserToken { username, .. } => {
             need_role_auth = true;
 
             selected_target_name = if let Some(ref rebound_target) = host_based_target_name {
@@ -124,7 +125,7 @@ async fn get_target_for_request(
             };
             username
         }
-        RequestAuthorization::UserToken { .. } | RequestAuthorization::AdminToken => {
+        RequestAuthorization::AdminToken => {
             return Ok(None)
         }
     };

@@ -194,6 +194,20 @@
 
             <TlsConfiguration bind:value={target.options.tls} />
 
+            <h5 class="mt-3">Basic Authentication (optional)</h5>
+            <div class="row">
+                <div class="col">
+                    <FormGroup floating label="Username">
+                        <input class="form-control" bind:value={target.options.basicAuthUsername} />
+                    </FormGroup>
+                </div>
+                <div class="col">
+                    <FormGroup floating label="Password">
+                        <input class="form-control" type="password" autocomplete="off" bind:value={target.options.basicAuthPassword} />
+                    </FormGroup>
+                </div>
+            </div>
+
             {#if $serverInfo?.externalHost}
                 <FormGroup floating label="Bind to a domain">
                     <Input type="text" placeholder={'foo.' + $serverInfo.externalHost} bind:value={target.options.externalHost} />

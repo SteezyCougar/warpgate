@@ -73,6 +73,12 @@ pub struct TargetHTTPOptions {
 
     #[serde(default)]
     pub external_host: Option<String>,
+
+    #[serde(default)]
+    pub basic_auth_username: Option<String>,
+
+    #[serde(default)]
+    pub basic_auth_password: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Object)]
